@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FUT Portfolio Collector
 // @namespace    miguel.fut.portfolio
-// @version      1.8
+// @version      1.9
 // @description  Read-only snapshot of the FC web app Transfer List and Transfer Targets, sent to your Google Sheet every ~20 minutes.
 // @match        https://www.ea.com/ea-sports-fc/ultimate-team/web-app/*
 // @match        https://www.ea.com/*/ea-sports-fc/ultimate-team/web-app/*
@@ -25,9 +25,9 @@
   and opens Player Bio once per new card to read gems, rarity, nation, club and league.
   The Hero/Icon market scan runs only when you start it from the Tampermonkey menu. It searches the market and
   presses "Watch" (adds to Transfer Targets) on qualifying listings, nothing else.
-  After each snapshot, the off-list price check searches the market for cards that have left your Transfer List, each at most once
-  an hour (the Apps Script picks them, longest-unsearched first), at most OFF_PER_RUN per snapshot with 20-40 s between searches,
-  and only reads the results: no price filter, no Watch, no alerts. Its searches count toward the daily and hourly caps.
+  After each snapshot, the off-list price check searches the market for every tracked card not yet searched this clock hour
+  (the Apps Script picks them, longest-unsearched first), one at a time with a random gap, and only reads the results: no price
+  filter, no Watch, no alerts. Its searches count toward the daily and hourly caps.
 
   Safety rules built in:
   - Waits until you have been idle (no mouse/keyboard) for IDLE_MIN minutes, so it never takes over while you trade.
@@ -251,7 +251,7 @@
   const SCAN_MIN = 150000, SCAN_MAX = 1000000;   // PC Min range to scan
   const CHECK_AUCTIONS = true;                    // second search per card for auctions (doubles the searches)
   const CARDS_PER_RUN = 20;                       // a run stops after this many cards; start again to continue
-  const DAILY_SEARCH_CAP = 500;                   // hard stop for the day (ET), to stay well clear of EA's limits
+  const DAILY_SEARCH_CAP = 800;                   // hard stop for the day (ET), to stay well clear of EA's limits
   const HOURLY_SEARCH_CAP = 40;                   // at most this many searches in any 60 minutes, so they spread through the day
   const SEARCH_GAP = [6000, 11000];               // random wait between searches (ms)
 
@@ -443,8 +443,8 @@
   // For cards that have left the Transfer List, one plain search each (no price filter), then record how many listings came
   // back and the lowest Buy Now. Prices under half or over twice the last Enhancer price (or your guide price for a card you
   // added to tracking) are skipped as other versions or typos. Read only: it never presses Watch or anything else.
-  // A few cards per snapshot, spaced out; the rest wait for the next snapshot, so searches never bunch up.
-  const OFF_PER_RUN = 3, OFF_GAP = [20000, 40000];
+  // Every card that's due, one at a time: runSearch already waits SEARCH_GAP before each search, plus OFF_GAP between cards.
+  const OFF_GAP = [4000, 9000];
   async function priceOffCard(card) {
     const rec = { at: new Date().toISOString(), player: card.player, rating: card.rating, left_list_at: card.left_list_at,
       last_enhancer: card.last_enhancer, search_max: null, listings: 0, lowest_bn: null, flags: [] };
@@ -472,7 +472,7 @@
     const recs = [];
     try {
       await openSearch();
-      for (const card of list.slice(0, OFF_PER_RUN)) {
+      for (const card of list) {
         if (recs.length) await sl(rnd(OFF_GAP));
         if (capHit()) { log(capHit()); break; }
         if ((Date.now() - lastInput) / 60000 < 0.5) { log('you are back, off-list check stopped'); break; }
