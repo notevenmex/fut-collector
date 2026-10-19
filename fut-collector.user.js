@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FUT Portfolio Collector
 // @namespace    miguel.fut.portfolio
-// @version      1.9
+// @version      1.9.1
 // @description  Read-only snapshot of the FC web app Transfer List and Transfer Targets, sent to your Google Sheet every ~20 minutes.
 // @match        https://www.ea.com/ea-sports-fc/ultimate-team/web-app/*
 // @match        https://www.ea.com/*/ea-sports-fc/ultimate-team/web-app/*
@@ -443,8 +443,8 @@
   // For cards that have left the Transfer List, one plain search each (no price filter), then record how many listings came
   // back and the lowest Buy Now. Prices under half or over twice the last Enhancer price (or your guide price for a card you
   // added to tracking) are skipped as other versions or typos. Read only: it never presses Watch or anything else.
-  // Every card that's due, one at a time: runSearch already waits SEARCH_GAP before each search, plus OFF_GAP between cards.
-  const OFF_GAP = [4000, 9000];
+  // Every card that's due, one at a time, about 20-40 s apart (runSearch waits SEARCH_GAP, plus OFF_GAP between cards).
+  const OFF_GAP = [14000, 29000];
   async function priceOffCard(card) {
     const rec = { at: new Date().toISOString(), player: card.player, rating: card.rating, left_list_at: card.left_list_at,
       last_enhancer: card.last_enhancer, search_max: null, listings: 0, lowest_bn: null, flags: [] };
