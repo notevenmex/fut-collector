@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         FUT Portfolio Collector
 // @namespace    miguel.fut.portfolio
-// @version      1.7
+// @version      1.8
 // @description  Read-only snapshot of the FC web app Transfer List and Transfer Targets, sent to your Google Sheet every ~20 minutes.
 // @match        https://www.ea.com/ea-sports-fc/ultimate-team/web-app/*
 // @match        https://www.ea.com/*/ea-sports-fc/ultimate-team/web-app/*
@@ -25,8 +25,9 @@
   and opens Player Bio once per new card to read gems, rarity, nation, club and league.
   The Hero/Icon market scan runs only when you start it from the Tampermonkey menu. It searches the market and
   presses "Watch" (adds to Transfer Targets) on qualifying listings, nothing else.
-  After each snapshot, the off-list price check searches the market for every card that has left your Transfer List, once an hour
-  (the Apps Script picks them) and only reads the results: no Watch, no alerts. Its searches count toward the daily and hourly caps.
+  After each snapshot, the off-list price check searches the market for cards that have left your Transfer List, each at most once
+  an hour (the Apps Script picks them, longest-unsearched first), at most OFF_PER_RUN per snapshot with 20-40 s between searches,
+  and only reads the results: no price filter, no Watch, no alerts. Its searches count toward the daily and hourly caps.
 
   Safety rules built in:
   - Waits until you have been idle (no mouse/keyboard) for IDLE_MIN minutes, so it never takes over while you trade.
@@ -439,25 +440,24 @@
     }
   }
   // ======================= Off-list price check (after each snapshot) =======================
-  // For cards that have left the Transfer List, one search each with Buy Now max = 110% of the last Enhancer price,
-  // then record how many listings came back and the lowest Buy Now. Read only: it never presses Watch or anything else.
-  const OFF_SEARCH_MAX = 1.10;
-  const step = (p) => (p < 1000 ? 50 : p < 10000 ? 100 : p < 50000 ? 250 : p < 100000 ? 500 : 1000);
+  // For cards that have left the Transfer List, one plain search each (no price filter), then record how many listings came
+  // back and the lowest Buy Now. Prices under half or over twice the last Enhancer price (or your guide price for a card you
+  // added to tracking) are skipped as other versions or typos. Read only: it never presses Watch or anything else.
+  // A few cards per snapshot, spaced out; the rest wait for the next snapshot, so searches never bunch up.
+  const OFF_PER_RUN = 3, OFF_GAP = [20000, 40000];
   async function priceOffCard(card) {
     const rec = { at: new Date().toISOString(), player: card.player, rating: card.rating, left_list_at: card.left_list_at,
       last_enhancer: card.last_enhancer, search_max: null, listings: 0, lowest_bn: null, flags: [] };
     if (/\(Holo\)/.test(card.player)) { rec.flags.push('holo version cannot be told apart in search, skipped'); return rec; }
     if (!(await pickPlayer({ name: card.player, rating: card.rating }))) { rec.flags.push('not found in search'); return rec; }
-    const s = step(card.last_enhancer * OFF_SEARCH_MAX);
-    rec.search_max = Math.ceil(card.last_enhancer * OFF_SEARCH_MAX / s) * s;
-    const res = await runSearch(null, rec.search_max);
+    const res = await runSearch(null, null);
     for (const r of res) {
       if (r.rating !== card.rating || !fold(r.text).includes(fold(card.player).split(' ').pop())) { rec.flags.push('skipped other version'); continue; }
-      if (r.bn && r.bn < card.last_enhancer * 0.5) { rec.flags.push(`suspect price ${k$(r.bn)} skipped`); continue; }
+      if (r.bn && card.last_enhancer && (r.bn < card.last_enhancer * 0.5 || r.bn > card.last_enhancer * 2)) { rec.flags.push(`suspect price ${k$(r.bn)} skipped`); continue; }
       rec.listings += 1;
       if (r.bn) rec.lowest_bn = Math.min(rec.lowest_bn ?? Infinity, r.bn);
     }
-    if (!rec.listings) rec.flags.push('no listings at or under search max');
+    if (!rec.listings) rec.flags.push('no listings');
     if (res.length >= 20) rec.flags.push('full results page, lowest is from the first page only');
     rec.flags = [...new Set(rec.flags)];
     await backToSearch();
@@ -472,11 +472,11 @@
     const recs = [];
     try {
       await openSearch();
-      for (const card of list) {
+      for (const card of list.slice(0, OFF_PER_RUN)) {
+        if (recs.length) await sl(rnd(OFF_GAP));
         if (capHit()) { log(capHit()); break; }
         if ((Date.now() - lastInput) / 60000 < 0.5) { log('you are back, off-list check stopped'); break; }
         recs.push(await priceOffCard(card));
-        await sl(rnd([4000, 8000]));
       }
       log('off-list check:', recs.map((r) => `${r.player} ${r.rating} ${k$(r.lowest_bn)}`).join(', '));
     } catch (e) {
